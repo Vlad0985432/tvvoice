@@ -29,20 +29,24 @@ public class AssistActivity extends Activity implements Engine.Reporter {
         stop();
         mThread = new RecognizerThread(this, new RecognizerThread.Listener() {
             @Override public void onReady() {}
-            @Override public void onPartial(String t) { if (mResult != null) mResult.setText(t); }
+            @Override public void onPartial(String t) { ui(() -> { if (mResult != null) mResult.setText(t); }); }
             @Override public void onFinal(String t) {
-                if (mResult != null) mResult.setText(t);
-                Engine.execute(AssistActivity.this, t, AssistActivity.this);
+                ui(() -> {
+                    if (mResult != null) mResult.setText(t);
+                    Engine.execute(AssistActivity.this, t, AssistActivity.this);
+                });
             }
             @Override public void onError(String what) {
-                if (mResult != null) mResult.setText(what);
+                ui(() -> { if (mResult != null) mResult.setText(what); });
             }
         });
         mThread.start();
     }
 
+    private void ui(Runnable r) { runOnUiThread(r); }
+
     @Override public void show(String text) {
-        if (mStatus != null) mStatus.setText(text);
+        ui(() -> { if (mStatus != null) mStatus.setText(text); });
     }
 
     private void stop() {
