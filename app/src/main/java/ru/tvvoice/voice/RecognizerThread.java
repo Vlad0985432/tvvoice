@@ -78,14 +78,23 @@ public class RecognizerThread extends Thread {
                 if (n <= 0) continue;
                 if (mRecognizer.acceptWaveForm(buf, n)) {
                     String t = extract(mRecognizer.getResult());
-                    if (!t.isEmpty()) { Log.i(TAG, "final=" + t); cb.onFinal(t); return; }
+                    if (!t.isEmpty()) {
+                        Log.i(TAG, "final=" + t);
+                        ru.tvvoice.History.append(ctx, "OK   " + t);
+                        cb.onFinal(t); return;
+                    }
                 } else {
                     String p = extract(mRecognizer.getPartialResult());
                     if (!p.isEmpty()) cb.onPartial(p);
                 }
             }
             String last = extract(mRecognizer.getPartialResult());
-            if (!last.isEmpty()) { cb.onFinal(last); return; }
+            if (!last.isEmpty()) {
+                Log.i(TAG, "final(timeout)=" + last);
+                ru.tvvoice.History.append(ctx, "TIMEOUT " + last);
+                cb.onFinal(last); return;
+            }
+            ru.tvvoice.History.append(ctx, "SILENCE /");
             cb.onError("не слышу команду");
         } catch (Throwable t) {
             Log.e(TAG, "recognizer died", t);

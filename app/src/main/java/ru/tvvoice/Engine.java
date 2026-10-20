@@ -7,10 +7,16 @@ import android.util.Log;
 
 import java.io.UnsupportedEncodingException;
 import java.net.URLEncoder;
+import java.util.Locale;
 
 import ru.tvvoice.voice.VoxAccessibility;
 
-/** Разбор распознанной фразы и исполнение команд. */
+/**
+ * Разбор и исполнение команд.
+ * Принцип (по мотивам jarvis): нормализация → обрезка глаголов/маркеров → нечёткий
+ * матчинг приложения по окнам из 1–3 токенов (Vosk часто искажает отдельные слова,
+ * но почти всегда хотя бы одно окно узнаваемо).
+ */
 public final class Engine {
 
     public interface Reporter { void show(String text); }
@@ -18,39 +24,68 @@ public final class Engine {
     private static final String TAG = "ru.tvvoice";
     public static final String BYEDPI_PKG = "io.github.romanvht.byedpi";
     public static final String TVBRO_PKG = "com.phlox.tvwebbrowser";
+    public static final String YOUTUBE_PKG = "com.google.android.youtube.tv";
 
-    /** Чётная строка — синонимы (как может их услышать vosk-small-ru), нечётная — пакет. */
+    /** Чётная строка — синонимы (что может выдать vosk), нечётная — пакет. */
     private static final String[][] APPS = {
-        { "ютуб", "юттуб", "ютыб", "ю туб" },
-        { "com.google.android.youtube.tv" },
-        { "браузер", "броузер", "бразуер", "тв бро" },
+        { "ютуб", "ютюб", "ю туб", "ютубе", "ютube", "юту сделать", "ютновь", "и тут", "ю пуст", "ютy бюджет" },
+        { YOUTUBE_PKG },
+        { "браузер", "брауser", "броузер", "бразуер", "браусер", "браузр", "б редактор", "брузер", "тв бро" },
         { TVBRO_PKG },
-        { "кинопоиск", "кино поист", "кинопоист" },
+        { "кинопоиск", "кинопоист", "кинопо", "кино поиск" },
         { "ru.kinopoisk.tv" },
-        { "иви", "айви" },
+        { "иви", "айви", "ivi" },
         { "ru.ivi.client" },
-        { "твизавр", "твзавр" },
+        { "твизавр", "твзавр", "твизлр", "tvzavr" },
         { "com.tvzavr.android.player.free" },
-        { "смотрешка", "смтрешка", "смотрелка" },
+        { "смотрешка", "смтрешка", "смотрелка", "сморешка" },
         { "tv.lfstrm.smotreshka" },
-        { "хэпп", "хепп", "хэпи", "х еп" },
+        { "хэпп", "хепп", "хэпи", "хеп", "х епп", "хепи" },
         { "su.happ.proxyutility" },
-        { "дпи", "бай дпи", "байдпи", "бай дипи", "buy dpi", "byedpi", "dpi" },
+        { "дпи", "бай дпи", "байдпи", "бей дпи", "dpi", "dpи", "бай пицца", "д бил", "ди прайс" },
         { BYEDPI_PKG },
-        { "настройки", "настройка", "настройик" },
+        { "настройки", "настройка", "настройк" },
         { "com.android.tv.settings" },
     };
 
     private Engine() {}
 
-    /* ---------------- разбор ---------------- */
+    /* ---------------- глаголы/маркеры ---------------- */
+
+    private static final String[] V_OPEN = {
+        "открой", "открыть", "открыт", "открыв", "откри", "олкри",
+        "запусти", "запуск", "запуск", "запуст",
+        "включи", "включить", "включа", "включение", "вкл", "включ",
+    };
+    private static final String[] V_CLOSE = {
+        "закрой", "закрыть", "закрыва", "выключи", "выключить", "выключа",
+        "остан", "останов", "стоп", "гаси", "выруб", "заверши", "закр",
+    };
+    private static final String[] V_SEARCH = {
+        "найди", "найти", "поищи", "поищи", "найдите", "поиск", "найдет",
+        "найдет", "найдит", "найде", "нади", "найдём", "найдемт", "найде",
+        "искать", "ищи", "ищем", "искать",
+    };
+    private static final String[] V_FILM = {
+        "фильм", "фильм", "кино", "сериал", "фильмо", "фильм",
+    };
+    private static final String[] NOISE = {
+        "и", "в", "на", "по", "к", "для", "пожалуйста", "пожалуйста", "ну", "нет", "то", "это",
+    };
+
+    /* ---------------- утилиты ---------------- */
 
     static String norm(String u) {
         if (u == null) return "";
-        String s = u.toLowerCase(java.util.Locale.ROOT)
-                .replace('ё', 'е')
-                .replaceAll("[^а-яa-z0-9 ]+", " ")
-                .trim();
+        String s = u.toLowerCase(Locale.ROOT).replace('ё', 'е');
+        // единый алфавит: latin → ближайшая кириллица («dpi», «youtube», «ivi»)
+        // a b c e g h i j k l m n o p q r s t u v w x y z
+        String latin = "abceghijklmnopqrstuvwxyz";
+        String cyr   = "абсегхийклмноркрстуввхуз";
+        int n = Math.min(latin.length(), cyr.length());
+        for (int i = 0; i < n; i++)
+            s = s.replace(latin.charAt(i), cyr.charAt(i));
+        s = s.replaceAll("[^а-я0-9 ]+", " ").trim();
         return s.replaceAll(" +", " ");
     }
 
@@ -65,105 +100,111 @@ public final class Engine {
         return d[a.length()][b.length()];
     }
 
-    private static boolean startsAny(String tok, String... prefixes) {
-        for (String p : prefixes) if (tok.startsWith(p)) return true;
+    private static boolean wordMatch(String tok, String[] words) {
+        for (String w : words) {
+            if (tok.equals(w)) return true;
+            if (tok.startsWith(w) && tok.length() <= w.length() + 3) return true;
+            if (w.length() >= 5 && lev(tok, w) <= 1) return true;
+        }
         return false;
     }
 
-    private static boolean isVerbOpen(String tok) {
-        if (startsAny(tok, "закр", "выкл", "остан", "стоп", "гаси")) return false;
-        if (tok.startsWith("включ") || tok.startsWith("вктлюч") || tok.startsWith("вьлюч")) return true;
-        return startsAny(tok, "откр", "запус", "start", "олкр");
-    }
-
-    private static boolean isVerbClose(String tok) {
-        return startsAny(tok, "закр", "выкл", "остан", "стоп", "гаси");
-    }
-
-    private static boolean isSearchMarker(String tok) {
-        String[] v = {"найди", "найти", "поищи", "найдите", "поиск"};
-        for (String s : v) if (lev(tok, s) <= 1) return true;
+    private static boolean isVerbOpen(String tok)  { return wordMatch(tok, V_OPEN); }
+    private static boolean isVerbClose(String tok) { return wordMatch(tok, V_CLOSE); }
+    private static boolean isSearchMarker(String tok) { return wordMatch(tok, V_SEARCH); }
+    private static boolean isFilmWord(String tok)  { return wordMatch(tok, V_FILM); }
+    private static boolean isNoise(String tok) {
+        for (String n : NOISE) if (tok.equals(n)) return true;
         return false;
     }
 
-    private static boolean isFilmWord(String tok) {
-        String[] v = {"фильм", "кино", "сериал", "филм", "фильмо"};
-        for (String s : v) if (lev(tok, s) <= 1) return true;
-        return false;
-    }
+    /* ---------------- разбор ---------------- */
 
-    private static boolean isNoiseWord(String tok) {
-        String[] v = {"и", "в", "на", "по", "видео"};
-        for (String s : v) if (tok.equals(s)) return true;
-        return false;
-    }
-
-    /** Пакет по фразе либо null. */
-    public static String parseApp(String utterance) {
-        String s = norm(utterance);
-        if (s.isEmpty()) return null;
-        String[] toks = s.split(" ");
-        int start = 0;
-        if (isVerbOpen(toks[start]) || isVerbClose(toks[start])) start++;
-        while (start < toks.length && (isSearchMarker(toks[start]) || isFilmWord(toks[start])
-                || toks[start].equals("и") || toks[start].equals("браузер") || toks[start].equals("в")))
-            start++;
-        if (start >= toks.length) return null;
-        StringBuilder rest = new StringBuilder();
-        for (int i = start; i < toks.length; i++) if (!isNoiseWord(toks[i])) rest.append(toks[i]);
-        String packed = rest.toString();
-        if (packed.isEmpty()) return null;
-
+    /** Сопоставить пакет по окнам из 1–3 токенов. */
+    static String matchPackage(String[] toks) {
+        int n = toks.length;
         int best = Integer.MAX_VALUE; String pkg = null;
-        for (int g = 0; g < APPS.length; g += 2) {
-            for (String syn : APPS[g]) {
-                String synN = syn.replace(" ", "");
-                int d = lev(packed, synN);
-                int thr = Math.max(1, synN.length() / 4);
-                if (d <= thr && d < best) { best = d; pkg = APPS[g + 1][0]; }
+        for (int width = 1; width <= 3 && width <= n; width++) {
+            for (int s = 0; s + width <= n; s++) {
+                StringBuilder sb = new StringBuilder();
+                boolean noise = true;
+                for (int i = s; i < s + width; i++) {
+                    String t = toks[i];
+                    if (!isNoise(t)) { noise = false; sb.append(t); }
+                }
+                if (noise) continue;
+                String packed = sb.toString();
+                for (int g = 0; g < APPS.length; g += 2) {
+                    for (String syn : APPS[g]) {
+                        String sn = syn.replace(" ", "");
+                        int d = lev(packed, sn);
+                        int thr = Math.max(1, sn.length() / 4);
+                        if (d <= thr && d < best) { best = d; pkg = APPS[g + 1][0]; }
+                    }
+                }
             }
         }
-        if (pkg != null) return pkg;
-
-        for (int g = 0; g < APPS.length; g += 2)
-            for (String syn : APPS[g]) {
-                String synN = syn.replace(" ", "");
-                if (packed.length() < synN.length()) continue;
-                String head = packed.substring(0, synN.length());
-                if (lev(head, synN) <= Math.max(1, synN.length() / 4)) return APPS[g + 1][0];
-            }
-        return null;
+        return pkg;
     }
 
-    public static boolean isClose(String utterance) {
-        for (String t : norm(utterance).split(" ")) if (isVerbClose(t)) return true;
-        return false;
+    /** Все xOffset разбора в одной структуре. */
+    public static class Parsed {
+        public String pkg;
+        public boolean open;
+        public boolean close;
+        public boolean search;
+        public String title;
     }
 
-    public static boolean hasSearch(String utterance) {
-        for (String t : norm(utterance).split(" ")) if (isSearchMarker(t)) return true;
-        return false;
-    }
+    public static Parsed parse(String utterance) {
+        String s = norm(utterance);
+        Parsed p = new Parsed();
+        if (s.isEmpty()) return p;
+        String[] raw = s.split(" ");
 
-    /** Название для поиска из фразы («открой браузер найди фильм дюна»). */
-    public static String parseTitle(String utterance) {
-        String[] toks = norm(utterance).split(" ");
-        StringBuilder sb = new StringBuilder();
-        boolean inSearch = false;
+        StringBuilder clean = new StringBuilder();
+        int lastSearchIdx = -1;
+        java.util.List<String> toks = new java.util.ArrayList<>();
+        for (int i = 0; i < raw.length; i++) {
+            String t = raw[i];
+            if (isVerbOpen(t))  { p.open = true; continue; }
+            if (isVerbClose(t)) { p.close = true; continue; }
+            if (isSearchMarker(t)) { p.search = true; lastSearchIdx = toks.size(); toks.add(t); continue; }
+            if (isFilmWord(t) || isNoise(t)) { toks.add(t); continue; }
+            toks.add(t);
+        }
+        // «чистые» токены для поиска приложения: без глаголов, маркеров, фильтов-шумов
         for (String t : toks) {
-            if (!inSearch) {
-                if (isSearchMarker(t)) inSearch = true;
-                continue;
-            }
-            if (isVerbOpen(t) || isVerbClose(t) || isNoiseWord(t) || isFilmWord(t)) {
-                if (!sb.toString().trim().isEmpty()) break;
-                continue;
-            }
-            sb.append(t).append(" ");
+            if (isSearchMarker(t) || isFilmWord(t) || isNoise(t)) continue;
+            clean.append(t).append(" ");
         }
-        String title = sb.toString().trim();
-        Log.d(TAG, "title=" + title);
-        return title.isEmpty() ? null : title;
+        String[] cleanToks = clean.toString().trim().split(" ");
+        if (cleanToks.length > 0 && !cleanToks[0].isEmpty()) p.pkg = matchPackage(cleanToks);
+
+        // название: всё после ПОСЛЕДНЕГО «найди», но без филмовых слов на стыке,
+        // и без названий приложений (когда «открой браузер найди фильм браузер»)
+        if (p.search) {
+            StringBuilder sb = new StringBuilder();
+            boolean started = false;
+            for (int i = lastSearchIdx + 1; i < toks.size(); i++) {
+                String t = toks.get(i);
+                boolean film = isFilmWord(t);
+                boolean noise = isNoise(t);
+                String aliasPkg = matchPackage(new String[]{ t });
+                if (noise && !started) continue;
+                if (film && !started) continue;
+                if (aliasPkg != null) continue;
+                if (noise) continue;
+                if (film) continue;
+                started = true;
+                sb.append(t).append(" ");
+            }
+            String title = sb.toString().trim();
+            p.title = title.isEmpty() ? null : title;
+        }
+        Log.i(TAG, "parsed: pkg=" + p.pkg + " open=" + p.open + " close=" + p.close
+                + " search=" + p.search + " title=" + p.title);
+        return p;
     }
 
     /* ---------------- исполнение ---------------- */
@@ -171,41 +212,38 @@ public final class Engine {
     public static void execute(Context c, String text, Reporter rep) {
         text = text == null ? "" : text;
         Log.i(TAG, "exec: " + text);
-        String pkg = parseApp(text);
-        boolean search = hasSearch(text);
-        String title = search ? parseTitle(text) : null;
+        Parsed p = parse(text);
 
-        if (search && title == null) {
+        if (p.pkg == null && !p.search) {
+            rep.show("Не понял команду:\n" + text);
+            return;
+        }
+        if (p.search && p.title == null && p.pkg == null) {
             rep.show("Не разобрал название.\nСкажите: «найди фильм <название>»");
             return;
         }
 
-        if (pkg != null && BYEDPI_PKG.equals(pkg)) {
-            dpiToggle(c, rep, isClose(text));
-            if (search && title != null) comeToSearch(c, title, rep);
+        if (BYEDPI_PKG.equals(p.pkg)) {
+            dpiToggle(c, rep, p.close);
+            if (p.search && p.title != null) comeToSearch(c, p.title, rep);
             return;
         }
 
-        if (pkg != null && !search) {
-            openApp(c, pkg, rep);
+        if (p.pkg != null) openApp(c, p.pkg, rep);
+
+        if (p.search && p.title != null) {
+            comeToSearch(c, p.title, rep);
             return;
         }
-
-        if (search && title != null) {
-            comeToSearch(c, title, rep);
-            return;
-        }
-
-        rep.show("Не понял команду");
+        // дойти до конца — браузер запустится через intent поиска (двойной старт не нужен)
     }
 
     private static void comeToSearch(Context c, String title, Reporter rep) {
-        try { Thread.sleep(400); } catch (InterruptedException ignored) {}
+        try { Thread.sleep(500); } catch (InterruptedException ignored) {}
         search(c, title, rep);
     }
 
     private static void dpiToggle(Context c, Reporter rep, boolean wantClose) {
-        // служба доступности биндится асинхронно — даём до 3 с после старта процесса
         boolean acc = VoxAccessibility.ready();
         for (int i = 0; i < 10 && !acc; i++) {
             try { Thread.sleep(300); } catch (InterruptedException ignored) {}
@@ -267,7 +305,7 @@ public final class Engine {
     public static String label(String pkg) {
         if (BYEDPI_PKG.equals(pkg)) return "БайДПИ";
         switch (pkg) {
-            case "com.google.android.youtube.tv": return "YouTube";
+            case YOUTUBE_PKG: return "YouTube";
             case "ru.kinopoisk.tv": return "Кинопоиск";
             case "ru.ivi.client": return "IVI";
             case "tv.lfstrm.smotreshka": return "Смотрешка";
