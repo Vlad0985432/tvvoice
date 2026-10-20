@@ -1,0 +1,48 @@
+apply plugin: 'com.android.application'
+
+android {
+    namespace 'ru.tvvoice'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'ru.tvvoice'
+        minSdk 21
+        targetSdk 34
+        versionCode 1
+        versionName '1.0'
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    aaptOptions {
+        // model zip уже сжат, двойное сжатие только тормозит сборку
+        noCompress 'zip'
+    }
+
+    lint {
+        abortOnError false
+    }
+
+    packagingOptions {
+        resources {
+            excludes += ['META-INF/*.version', 'META-INF/*.kotlin_module', 'kotlin/**']
+        }
+    }
+}
+
+dependencies {
+    implementation('com.alphacephei:vosk-android:0.3.75') {
+        exclude group: 'net.java.dev.jna', module: 'jna'
+    }
+    implementation 'net.java.dev.jna:jna:5.13.0@aar'
+}

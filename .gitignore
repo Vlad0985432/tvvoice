@@ -1,0 +1,15 @@
+# Build outputs
+.gradle/
+build/
+app/build/
+local.properties
+*.keystore
+!debug.keystore
+
+# IDE
+.idea/
+*.iml
+
+# OS
+Thumbs.db
+.DS_Store
