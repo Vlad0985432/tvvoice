@@ -210,6 +210,19 @@ public final class Engine {
     /* ---------------- исполнение ---------------- */
 
     public static void execute(Context c, String text, Reporter rep) {
+        try {
+            executeInner(c, text, rep);
+        } catch (Throwable t) {
+            // крах здесь убивал процесс, в котором висит служба доступности
+            // (и вместе с ней — фильтр клавиш пульта). Никогда не падаём.
+            Log.e(TAG, "exec failed", t);
+            History.append(c, "ERR   " + text);
+            try { rep.show("Ошибка разбора команды"); } catch (Throwable ignored) {}
+        }
+        History.append(c, "EXEC  " + text);
+    }
+
+    private static void executeInner(Context c, String text, Reporter rep) {
         text = text == null ? "" : text;
         Log.i(TAG, "exec: " + text);
         Parsed p = parse(text);

@@ -36,31 +36,45 @@
                 <action android:name="android.intent.action.ASSIST" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
+            <intent-filter>
+                <action android:name="android.speech.action.WEB_SEARCH" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
         </activity>
 
         <service
             android:name=".voice.VoxService"
             android:exported="true"
-            android:permission="android.permission.BIND_VOICE_SERVICE">
+            android:permission="android.permission.BIND_VOICE_INTERACTION">
             <intent-filter>
                 <action android:name="android.service.voice.VoiceInteractionService" />
             </intent-filter>
             <meta-data
-                android:name="android.service.voice"
+                android:name="android.voice_interaction"
                 android:resource="@xml/voice_service_config" />
         </service>
 
         <service
             android:name=".voice.VoxSessionService"
             android:exported="true"
-            android:permission="android.permission.BIND_VOICE_SERVICE">
+            android:permission="android.permission.BIND_VOICE_INTERACTION">
             <intent-filter>
                 <action android:name="android.service.voice.VoiceInteractionSessionService" />
             </intent-filter>
         </service>
 
         <service
+            android:name=".voice.DummyRecognitionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_RECOGNITION_SERVICE">
+            <intent-filter>
+                <action android:name="android.speech.RecognitionService" />
+            </intent-filter>
+        </service>
+
+        <service
             android:name=".voice.VoxAccessibility"
+            android:process=":acc"
             android:exported="true"
             android:label="Голос ТВ — кнопки и клик"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">

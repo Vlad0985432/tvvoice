@@ -29,16 +29,26 @@ public class VoxAccessibility extends AccessibilityService {
     @Override
     protected boolean onKeyEvent(KeyEvent event) {
         int code = event.getKeyCode();
-        if (event.getAction() == android.view.KeyEvent.ACTION_DOWN
-                && (code == android.view.KeyEvent.KEYCODE_VOICE_ASSIST   // 231
-                 || code == android.view.KeyEvent.KEYCODE_ASSIST)) {     // 219
+        if (event.getAction() == KeyEvent.ACTION_DOWN
+                && (code == KeyEvent.KEYCODE_VOICE_ASSIST   // 231
+                 || code == KeyEvent.KEYCODE_ASSIST)) {     // 219
             long now = android.os.SystemClock.uptimeMillis();
             if (now - sLastVoiceKeyMs > 1500) {
                 sLastVoiceKeyMs = now;
                 Log.i(TAG, "voice key captured: " + code);
-                Intent i = new Intent(this, ru.tvvoice.AssistActivity.class);
-                i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
-                startActivity(i);
+                // не блокируем поток фильтра: запуск активности — на главном потоке
+                android.os.Handler h = new android.os.Handler(
+                        android.os.Looper.getMainLooper());
+                h.post(() -> {
+                    try {
+                        Intent i = new Intent(this, ru.tvvoice.AssistActivity.class);
+                        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                                | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
+                        startActivity(i);
+                    } catch (Throwable t) {
+                        Log.e(TAG, "voice key launch failed", t);
+                    }
+                });
             }
             return true; // съедаем событие, чтобы не открывался katniss
         }
